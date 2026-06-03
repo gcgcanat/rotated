@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 
-from rotated.boxes.nms import multiclass_nms
+from rotated.boxes.nms import multiclass_nms, rotated_nms
 
 
 class DetectionPostProcessor(nn.Module):
@@ -24,6 +24,7 @@ class DetectionPostProcessor(nn.Module):
             - "sequential": Original implementation (lowest memory, slowest)
             - "vectorized": Standard NMS with vectorized IoU (default, ~20-30x faster)
             - "fast": Fast-NMS algorithm (~50-100x faster, slightly more aggressive)
+        use_multiclass_nms: if True, use multiclass NMS (i.e. apply NMS only on bbox with same classes) else apply NMS across all boxes regardless of class
         n_samples: Number of samples for IoU computation, using approx SDF-L1 method
         eps: Epsilon for numerical stability
 
@@ -37,6 +38,7 @@ class DetectionPostProcessor(nn.Module):
         detections_per_img: int = 300,
         topk_candidates: int = 1000,
         nms_mode: str = "vectorized",
+        use_multiclass_nms: bool = True,
         n_samples: int = 40,
         eps: float = 1e-7,
     ):
@@ -46,6 +48,7 @@ class DetectionPostProcessor(nn.Module):
         self.detections_per_img = detections_per_img
         self.topk_candidates = topk_candidates
         self.nms_mode = nms_mode
+        self.use_multiclass_nms = use_multiclass_nms
         self.n_samples = n_samples
         self.eps = eps
 
@@ -87,6 +90,7 @@ class DetectionPostProcessor(nn.Module):
             detections_per_img=self.detections_per_img,
             topk_candidates=self.topk_candidates,
             nms_mode=self.nms_mode,
+            use_multiclass_nms=self.use_multiclass_nms,
             n_samples=self.n_samples,
             eps=self.eps,
         )
@@ -111,6 +115,7 @@ def _postprocess_batch(
     detections_per_img: int,
     topk_candidates: int,
     nms_mode: str,
+    use_multiclass_nms: bool,
     n_samples: int,
     eps: float,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -127,6 +132,7 @@ def _postprocess_batch(
         detections_per_img: Max detections per image
         topk_candidates: Top-k before NMS
         nms_mode: NMS mode
+        use_multiclass_nms: if True, use multiclass NMS
         n_samples: IoU samples
         eps: Epsilon
 
@@ -151,6 +157,7 @@ def _postprocess_batch(
             detections_per_img=detections_per_img,
             topk_candidates=topk_candidates,
             nms_mode=nms_mode,
+            use_multiclass_nms=use_multiclass_nms,
             n_samples=n_samples,
             eps=eps,
         )
@@ -171,6 +178,7 @@ def _postprocess_single(
     detections_per_img: int,
     topk_candidates: int,
     nms_mode: str,
+    use_multiclass_nms: bool,
     n_samples: int,
     eps: float,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -187,6 +195,7 @@ def _postprocess_single(
         detections_per_img: Maximum detections to keep
         topk_candidates: Number of top candidates before NMS
         nms_mode: NMS algorithm mode
+        use_multiclass_nms: if True, use multiclass NMS
         n_samples: Number of samples for IoU computation
         eps: Epsilon for numerical stability
 
@@ -218,15 +227,25 @@ def _postprocess_single(
         filtered_boxes = filtered_boxes[top_idxs]
         filtered_labels = filtered_labels[top_idxs]
 
-    keep_indices = multiclass_nms(
-        boxes=filtered_boxes,
-        scores=filtered_scores,
-        labels=filtered_labels,
-        iou_threshold=nms_thresh,
-        nms_mode=nms_mode,
-        n_samples=n_samples,
-        eps=eps,
-    )
+    if use_multiclass_nms:
+        keep_indices = multiclass_nms(
+            boxes=filtered_boxes,
+            scores=filtered_scores,
+            labels=filtered_labels,
+            iou_threshold=nms_thresh,
+            nms_mode=nms_mode,
+            n_samples=n_samples,
+            eps=eps,
+        )
+    else:
+        keep_indices = rotated_nms(
+            boxes=filtered_boxes,
+            scores=filtered_scores,
+            iou_threshold=nms_thresh,
+            nms_mode=nms_mode,
+            n_samples=n_samples,
+            eps=eps,
+        )
 
     if keep_indices.numel() == 0:
         return output_boxes, output_scores, output_labels

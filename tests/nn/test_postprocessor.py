@@ -80,7 +80,7 @@ def test_postprocess_nms_suppression():
     scores = torch.tensor([[0.9, 0.8, 0.6]])
     labels = torch.tensor([[0, 0, 1]])  # First two same class
 
-    postprocessor = DetectionPostProcessor(detections_per_img=5, topk_candidates=10)
+    postprocessor = DetectionPostProcessor(detections_per_img=5, topk_candidates=10, use_multiclass_nms=True)
     _, result_scores, _ = postprocessor(boxes, scores, labels)
 
     # Should suppress overlapping box, keep 2 total
@@ -93,6 +93,39 @@ def test_postprocess_nms_suppression():
     assert 0.9 in valid_scores  # Highest scoring overlapping box
     assert 0.6 in valid_scores  # Separate box
     assert 0.8 not in valid_scores  # Suppressed box
+
+
+def test_postprocess_nms_multiclass_false():
+    """Test postprocess with use_multiclass_nms=False applies NMS across all classes."""
+    boxes = torch.tensor(
+        [
+            [
+                [100.0, 100.0, 50.0, 30.0, 0.0],  # High score, class 0
+                [102.0, 102.0, 52.0, 32.0, 0.0],  # Lower score, class 1, overlaps with first
+                [200.0, 200.0, 30.0, 20.0, 0.0],  # Separate box, class 2
+            ]
+        ]
+    )
+    scores = torch.tensor([[0.9, 0.8, 0.6]])
+    labels = torch.tensor([[0, 1, 2]])  # All different classes
+
+    # With use_multiclass_nms=False, NMS is applied across all boxes regardless of class
+    postprocessor = DetectionPostProcessor(detections_per_img=5, topk_candidates=10, use_multiclass_nms=False)
+    _, result_scores, result_labels = postprocessor(boxes, scores, labels)
+
+    # Should suppress overlapping box, keep 2 total (both non-overlapping)
+    valid_mask = result_scores[0] > 0
+    num_valid = valid_mask.sum().item()
+    assert num_valid == 2
+
+    # Should keep highest scoring box + separate box (class 0 and class 2)
+    valid_scores = result_scores[0][valid_mask]
+    valid_labels = result_labels[0][valid_mask]
+    assert 0.9 in valid_scores
+    assert 0.6 in valid_scores
+    # Suppressed due to overlap
+    assert 1 not in valid_labels
+    assert 0.8 not in valid_scores
 
 
 def test_postprocess_batched_input():
@@ -173,7 +206,9 @@ def test_postprocess_invalid_input_dimensions():
 @pytest.fixture
 def postprocessor() -> DetectionPostProcessor:
     """Create a postprocessor instance."""
-    return DetectionPostProcessor(score_thresh=0.05, nms_thresh=0.5, detections_per_img=100, topk_candidates=200)
+    return DetectionPostProcessor(
+        score_thresh=0.05, nms_thresh=0.5, detections_per_img=100, topk_candidates=200, use_multiclass_nms=True
+    )
 
 
 SampleData: TypeAlias = tuple[torch.Tensor, torch.Tensor, torch.Tensor]
@@ -306,3 +341,9 @@ def test_postprocessor_input_validation(postprocessor: DetectionPostProcessor):
 
     with pytest.raises(ValueError, match="Expected 3D batched input"):
         postprocessor(boxes_2d, scores_2d, labels_2d)
+
+
+def test_postprocessor_use_multiclass_nms_default():
+    """Test that use_multiclass_nms defaults to True."""
+    postprocessor = DetectionPostProcessor()
+    assert postprocessor.use_multiclass_nms is True
