@@ -24,7 +24,7 @@ class DetectionPostProcessor(nn.Module):
             - "sequential": Original implementation (lowest memory, slowest)
             - "vectorized": Standard NMS with vectorized IoU (default, ~20-30x faster)
             - "fast": Fast-NMS algorithm (~50-100x faster, slightly more aggressive)
-        use_multiclass_nms: if True, use multiclass NMS
+        use_multiclass_nms: if True, use multiclass NMS (i.e. apply NMS only on bbox with same classes) else apply NMS across all boxes regardless of class
         n_samples: Number of samples for IoU computation, using approx SDF-L1 method
         eps: Epsilon for numerical stability
 
